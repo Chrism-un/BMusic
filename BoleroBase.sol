@@ -22,9 +22,9 @@ contract BoleroBase is IUniswapFactory {
 
     // Fonction qui récupère toutes les fonctionnalités UniswapPair
     function createPair(address tokenA, address tokenB) external returns (address pair) {
-        require(tokenA != tokenB, 'UniswapV2: IDENTICAL_ADDRESSES');
+        require(tokenA != tokenB, 'IDENTICAL_ADDRESSES');
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(token0 != address(0), 'UniswapV2: ZERO_ADDRESS');
+        require(token0 != address(0), 'ZERO_ADDRESS');
         require(getPair[token0][token1] == address(0), 'PAIR_EXISTS'); // single check is sufficient
         bytes memory bytecode = type(UniswapPair).creationCode; // Tous
         bytes32 salt = keccak256(abi.encodePacked(token0, token1));
@@ -39,12 +39,12 @@ contract BoleroBase is IUniswapFactory {
     }
 
     function setFeeTo(address _feeTo) external {
-        require(msg.sender == feeToSetter, 'UniswapV2: FORBIDDEN');
+        require(msg.sender == feeToSetter, 'FORBIDDEN');
         feeTo = _feeTo;
     }
 
     function setFeeToSetter(address _feeToSetter) external {
-        require(msg.sender == feeToSetter, 'UniswapV2: FORBIDDEN');
+        require(msg.sender == feeToSetter, 'FORBIDDEN');
         feeToSetter = _feeToSetter;
     }
 }
