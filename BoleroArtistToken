@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.10;
+import "./BoleroERC20.sol";
+import "./BoleroArtistICO.sol";
+
+contract BoleroArtistToken is BoleroERC20 {
+    IBoleroArtist public boleroArtist;
+    BoleroArtistICO public icoContract;
+
+    uint256 public constant MAXIMUM_PERCENT = 10000; //10%
+    address public bolero = address(0); // 0x0000
+    address public liquidityPool = address(0); // 0x0000
+
+    bool public isAvailableToTrade = false; // Disponible pour trade
+    bool public isEmergencyPause = false;
+
+    mapping(address => bool) public allowlist;
+
+ modifier onlyBoleroOrManagement() {
+  require(address(msg.sender) == bolero || address(msg.sender) == BoleroABI(bolero).management(), "!authorized");
+  _;
+ }
+
+    event SetAvailableToTrade(bool status);
+    event SetEmergencyPause(bool shouldPause);
+    event SetLiquidityPool(address liquidityPool);
+
+    constructor(
+        address _boleroAddress,
+        address _artistContract,
+        address _icoWantToken,
+        address _liquidityPool,
+        uint256 _initialPricePerShare,
+        uint256[4] memory _distribution, // [0] for Bolero, [1] for Artist, [2] for Liquidity Pool, [3] for Primary Market
+        uint256[2] memory _shares // [0] for bolero, [1] for artist
+    ) BoleroERC20(
+        IBoleroArtist(_artistContract).name(),
+        IBoleroArtist(_artistContract).symbol()
+    ) {
+        bolero = address(_boleroAddress);
+        boleroArtist = IBoleroArtist(_artistContract);
+
+        if (_distribution[0] > 0) {
+            _mint(BoleroABI(bolero).rewards(), _distribution[0]);
+        }
+        if (_distribution[1] > 0) {
+            _mint(boleroArtist.artistPayment(), _distribution[1]);
+        }
+        if (_distribution[2] > 0) {
+            _mint(_liquidityPool, _distribution[2]);
+        }
+        icoContract = new BoleroArtistICO(
+            bolero,
+            _artistContract,
+            _icoWantToken,
+            _shares,
+            _initialPricePerShare
+        );
+        _mint(address(icoContract), _distribution[3]);
+        setAllowlist(address(this), true);
+        setAllowlist(address(BoleroABI(bolero).management()), true);
+        setAllowlist(address(bolero), true);
+    }
+
+    /* MANAGEMENT & CONTROL ACTIONS FOR BOLERO/MANAGEMENT */
+    /*******************************************************************************
+    ** @notice
+    **  Change the availability for the secondary market.
+    **      Can only be called by the management.
+    *******************************************************************************/
+    function setAvailableToTrade() public onlyBoleroOrManagement() {
+        _setAvailableToTrade();
+    }
+    function _setAvailableToTrade() internal {
+        require (!isAvailableToTrade, "already availableToTrade");
+
+        isAvailableToTrade = true;
+        emit SetAvailableToTrade(isAvailableToTrade);
+        //Send remaining to LP
+        uint256 senderBalance = balanceOf(address(icoContract));
+        _balances[address(icoContract)] = 0;
+        _balances[liquidityPool] += senderBalance;
+        emit Transfer(address(icoContract), liquidityPool, senderBalance);
+    }
+
+    /*******************************************************************************
+    ** @notice Pause all the transfert from/out/mint/burn to handle an emergency
+    **          situation.
+    ** @param shouldPause: bool value, should we pause or unpause the emergency
+    *******************************************************************************/
+    function setEmergencyPause(bool shouldPause) public onlyBoleroOrManagement() {
+        isEmergencyPause = shouldPause;
+        emit SetEmergencyPause(shouldPause);
+    }
+
+    function transferFromICO(address sender, address recipient, uint256 amount) external {
+        require(msg.sender == address(icoContract), "invalid sender");
+        require(sender != address(0), "ERC20: transfer from the zero address");
+        require(recipient != address(0), "ERC20: transfer to the zero address");
+
+        uint256 senderBalance = _balances[sender];
+        require(senderBalance >= amount, "ERC20: transfer amount exceeds balance");
+
+    // The sender is sending the full amount (including fees)
+        _balances[sender] = senderBalance - amount;
+        _balances[recipient] += amount;
+
+        emit Transfer(sender, recipient, amount);
+    }
+
+    /*******************************************************************************
+    ** @notice
+    **  Change the address of the LP.
+    **      Can only be called by the Bolero Management.
+    *******************************************************************************/
+    function setLiquidityPool(address _liquidityPool) public onlyBoleroOrManagement() {
+        require (_liquidityPool != address(0), "invalid address");
+        liquidityPool = _liquidityPool;
+        emit SetLiquidityPool(_liquidityPool);
+    }
+
+    /*******************************************************************************
+    ** @notice
+    **  Allow/disallow an address to bypass primary market limitations
+    **      Can only be called by the Bolero Management.
+    *******************************************************************************/
+    function setAllowlist(address _addr, bool _isAllowed) public onlyBoleroOrManagement() {
+        allowlist[_addr] = _isAllowed;
+    }
+
+    /*******************************************************************************
+    ** @notice
+    **  Hook that is called before any transfer of tokens. This includes minting
+    **      and burning.
+    **      Prevent any transfer while the isAvailableToTrade is not enabled;
+    ** @param from: address sending the tokens
+    ** @param to: address receiveing the tokens
+    ** @param amount: not used, the amount of token transfered
+    *******************************************************************************/
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+        require(isEmergencyPause == false, "emergency pause");
+  amount; //chut
+        if (isAvailableToTrade) {
+            return;
+        }  else if (allowlist[from] == true) {
+            return;
+        } else if (from == address(0) && (msg.sender == BoleroABI(bolero).management() || msg.sender == address(bolero))) {
+            return;
+        } else if (to == address(0) && (msg.sender == BoleroABI(bolero).management() || msg.sender == address(bolero))) {
+            return;
+        }
+        require(isAvailableToTrade, "non transferable right now");
+    }
+}
